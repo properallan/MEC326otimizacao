@@ -57,6 +57,7 @@ def Fspline(sp):
 
     # Q1D setup
     noz.setX(np.linspace(nozzleL[0], nozzleL[1], nQ1D))
+
     s = interpolate(sp, nQ1D)
     noz.setS(s)
     
@@ -116,9 +117,16 @@ def Fxt(xt):
     return p, noz
 
 def J(p, pt):
-    return np.sum(((p-pt)/pt)**2.0)
+    N = np.size(pt)
+    #return np.sum((p-pt)**2.0)
+    #return np.sqrt(np.sum(((p-pt)/pt)**2.0))
+    return 1/N*np.sqrt(np.sum((p-pt)**2))
+    #return np.sum(((p-pt)/pt)**2.0)
     
 def objF(xt, p_target):
+    if interiorOnly:
+        xt = np.append(np.append(st[0],xt),st[-1])
+    
     p_guess, noz_guess = F(xt)
     J_ = J(p_guess, p_target)
     return J_ 
@@ -139,6 +147,8 @@ def callB(xk):
         if np.size(xk)==1:
             s = Area(x,xk[0])
         else:
+            if interiorOnly:
+                xk = np.append(np.append(st[0],xk),st[-1])
             s = interpolate(xk, nQ1D) 
         plt.plot(x,s)
         plt.plot(x,st)
@@ -152,7 +162,9 @@ def callBres(xk, res):
         if np.size(xk)==1:
             s = Area(np.linspace(0,10,nQ1D),xk[0])
         else:
-            s = interpolate(xk, nQ1D)
+            if interiorOnly:
+                xk = np.append(np.append(st[0],xk),st[-1])
+            s = interpolate(xk, nQ1D) 
         plt.plot(x,s)
         plt.plot(x,st)
         plt.show()
@@ -191,8 +203,8 @@ def opt(methods, p_target, init, Fun, bounds=None, plots=False, savedict=None, f
 
         if plot:
             print(res[met])
-            p_opt, noz_opt = F(xt=res[met].x)
-            p_ini, noz_ini = F(xt=xti)
+            p_opt, noz_opt = F(res[met].x)
+            p_ini, noz_ini = F(init)
             
             x = noz_ini.getQ1D('outputs/x.txt')
 
@@ -214,11 +226,12 @@ if __name__ == '__main__':
     parser.add_argument('-p','--polynomial', help='polynomial parametrization', default=False)   
     parser.add_argument('-s','--spline', help='spline parametrization', default=False)   
     parser.add_argument('-sbi','--splineBetterInit', help='better spline initialization', default=False)  
+    parser.add_argument('-si','--splineInit', help='spline only for the interior points', default=False)  
     parser.add_argument('-t', '--target', help='xt for the target geometry', default=5.5) 
     parser.add_argument('-m', '--method', help='Available: Nelder-Mead,Powell,CG,BFGS,L-BFGS-B,TNC,COBYLA,SLSQP,trust-constr,all', default='all') 
     parser.add_argument('-pl', '--plot', help='plot iterative process and final results', default=False) 
     parser.add_argument('-wd', '--workdir', help='working directory for q1D solver results', default='./results/')
-    parser.add_argument('-tol', '--tolerance', help='stop criteria for optimization', default=1) 
+    parser.add_argument('-tol', '--tolerance', help='stop criteria for optimization', default=1e-8) 
     parser.add_argument('-r', '--resultfile', help='result filename', default='resDefaut.pickle') 
     
     args = parser.parse_args()
@@ -231,21 +244,23 @@ if __name__ == '__main__':
     workdir = args.workdir
 
     global nQ1d
-    nQ1D = 199
+    nQ1D = 100
     global tolQ1D
-    tolQ1D = 1e-6
+    tolQ1D = 1e-8
 
     global tol
     tol = float(args.tolerance)
 
     plot = args.plot
-    xtt = args.target
+    xtt = float(args.target)
  
     # target pressure
     p_target, noz_target = Fxt(xt=xtt)
     spt = getSpacedElements(noz_target.Sn,8)
     global st
     st = noz_target.Sn
+
+    global interiorOnly
 
     if args.polynomial:    
         # initial guess
@@ -257,22 +272,47 @@ if __name__ == '__main__':
         resXt = opt(methods, p_target=p_target, bounds=bounds, init=xti, Fun=Fxt, plots=plot, savedict=res, filename=args.resultfile)
 
     if args.spline:
+        interiorOnly = False 
         # use a uniform distribution for the initial guess
         spi = np.ones(8)
         bounds = [(0.0,2.5) for val in range(8)]
+
+        bounds = [(val,val) for val in spt]
+        for i,val in enumerate(bounds):
+            if i not in [0,7]:
+                bounds[i] = (0.0,2.5)
+
         resUniform = {}
         opt(methods, p_target=p_target, init=spi, Fun=Fspline, bounds=bounds, plots=plot, savedict=resUniform, filename=args.resultfile)
         
-    if args.splineBetterInit:    
+    if args.splineBetterInit: 
+        interiorOnly = False   
         # use a better initial guess for spline
         xti = 7.5
         si = Area(np.linspace(0,10,nQ1D), xti)
-        spi=np.linspace(si[0],si[-1], 8)
-        
-        bounds = [(val,val) for val in np.linspace(spi[0],spi[-1],8)]
+        #spi=np.linspace(si[0],si[-1], 8)
+        spi = getSpacedElements(si,8)
+
+        bounds = [(val,val) for val in spt]
         for i,val in enumerate(bounds):
             if i not in [0,7]:
-                bounds[i] = (0,val[1])
+                bounds[i] = (0.0,2.5)
     
         resBetterInit = {}
         opt(methods, p_target=p_target, init=spi, Fun=Fspline, bounds=bounds, plots=plot, savedict=resBetterInit, filename=args.resultfile)
+
+    if args.splineInit: 
+        interiorOnly = True   
+        # use a better initial guess for spline
+        xti = 7.5
+        si = Area(np.linspace(0,10,nQ1D), xti)
+        #spi=np.linspace(si[0],si[-1], 8)
+        spi = getSpacedElements(si,8)
+
+        bounds = [(val-0.01,val+0.01) for val in spt]
+        for i,val in enumerate(bounds):
+            if i not in [0,7]:
+                bounds[i] = (0.0,2.5)
+    
+        resBetterInit = {}
+        opt(methods, p_target=p_target, init=spi[1:-1], Fun=Fspline, bounds=bounds[1:-1], plots=plot, savedict=resBetterInit, filename=args.resultfile)
